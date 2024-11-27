@@ -1,41 +1,54 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Check, Upload } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
+import { Download, Upload, Ruler, Move, Copy, Pencil, Bezier } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 const FurnitureMeasurement = () => {
   const [lines, setLines] = useState([]);
+  const [curves, setCurves] = useState([]);
+  const [selectedTool, setSelectedTool] = useState('line');
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPoint, setStartPoint] = useState(null);
   const [image, setImage] = useState(null);
   const [showResults, setShowResults] = useState(false);
+  const [error, setError] = useState(null);
+  const [controlPoints, setControlPoints] = useState([]);
   const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  // Scale factor (1 pixel = 1cm for demonstration)
-  const scaleFactor = 1;
+  const [currentLine, setCurrentLine] = useState(null);
+  const [selectedLine, setSelectedLine] = useState(null);
 
   useEffect(() => {
     if (canvasRef.current) {
       drawCanvas();
     }
-  }, [lines, image]);
+  }, [lines, curves, image, selectedTool, currentLine, selectedLine]);
 
   const handleImageUpload = (event) => {
     const file = event.target.files[0];
     if (file) {
+      if (file.size > 20 * 1024 * 1024) {
+        setError('File size should be less than 20MB');
+        return;
+      }
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        setError('Please upload a valid image (JPEG, PNG, WEBP)');
+        return;
+      }
+
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
           setImage(img);
           const canvas = canvasRef.current;
-          const maxWidth = 800;
-          const maxHeight = 600;
+          const maxWidth = window.innerWidth * 0.8;
+          const maxHeight = window.innerHeight * 0.6;
+          
+          // Responsive image scaling
           let width = img.width;
           let height = img.height;
           
-          // Calculate aspect ratio to maintain proportions
           if (width > maxWidth) {
             const ratio = maxWidth / width;
             width = maxWidth;
@@ -50,6 +63,7 @@ const FurnitureMeasurement = () => {
           canvas.width = width;
           canvas.height = height;
           drawCanvas();
+          setError(null);
         };
         img.src = e.target.result;
       };
@@ -62,12 +76,12 @@ const FurnitureMeasurement = () => {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw the uploaded image
+    // Draw background image
     if (image) {
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
     }
 
-    // Draw all lines
+    // Draw lines
     ctx.strokeStyle = 'red';
     ctx.lineWidth = 2;
     lines.forEach((line, index) => {
@@ -76,155 +90,270 @@ const FurnitureMeasurement = () => {
       ctx.lineTo(line.end.x, line.end.y);
       ctx.stroke();
 
-      // Draw line number with background
-      const midX = (line.start.x + line.end.x) / 2;
-      const midY = (line.start.y + line.end.y) / 2;
-      
-      // White background for better visibility
-      ctx.fillStyle = 'white';
-      ctx.fillRect(midX - 12, midY - 12, 24, 24);
-      
-      // Black border around background
-      ctx.strokeStyle = 'black';
-      ctx.strokeRect(midX - 12, midY - 12, 24, 24);
-      
-      // Line number
-      ctx.fillStyle = 'black';
-      ctx.font = '14px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(index + 1, midX, midY);
+      // Highlight selected line
+      if (selectedLine === index) {
+        ctx.strokeStyle = 'yellow';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(line.start.x, line.start.y);
+        ctx.lineTo(line.end.x, line.end.y);
+        ctx.stroke();
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 2;
+      }
     });
+
+    // Draw curves
+    ctx.strokeStyle = 'blue';
+    curves.forEach((curve) => {
+      ctx.beginPath();
+      ctx.moveTo(curve[0].x, curve[0].y);
+      
+      if (curve.length === 3) {
+        // Quadratic curve
+        ctx.quadraticCurveTo(
+          curve[1].x, curve[1].y, 
+          curve[2].x, curve[2].y
+        );
+      } else if (curve.length === 4) {
+        // Bezier curve
+        ctx.bezierCurveTo(
+          curve[1].x, curve[1].y,
+          curve[2].x, curve[2].y,
+          curve[3].x, curve[3].y
+        );
+      }
+      
+      ctx.stroke();
+    });
+
+    // Draw current drawing element
+    if (currentLine) {
+      ctx.beginPath();
+      ctx.moveTo(currentLine.start.x, currentLine.start.y);
+      ctx.lineTo(currentLine.end.x, currentLine.end.y);
+      ctx.stroke();
+    }
   };
 
   const handleMouseDown = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    setStartPoint({ x, y });
-    setIsDrawing(true);
-  };
-
-  const handleMouseMove = (e) => {
-    if (!isDrawing) return;
-
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    drawCanvas();
-    
-    // Draw current line
-    ctx.strokeStyle = 'red';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(startPoint.x, startPoint.y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
+    switch (selectedTool) {
+      case 'line':
+        setStartPoint({ x, y });
+        setIsDrawing(true);
+        break;
+      case 'curve':
+        if (controlPoints.length < 3) {
+          setControlPoints([...controlPoints, { x, y }]);
+        }
+        break;
+      case 'select':
+        const selectedLineIndex = lines.findIndex(line => isPointNearLine({ x, y }, line));
+        if (selectedLineIndex !== -1) {
+          setSelectedLine(selectedLineIndex);
+        }
+        break;
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (isDrawing && selectedTool === 'line') {
+      setCurrentLine({
+        start: startPoint,
+        end: { x, y }
+      });
+    }
   };
 
   const handleMouseUp = (e) => {
-    if (!isDrawing) return;
-
-    const rect = canvasRef.current.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
-    const newLine = {
-      start: startPoint,
-      end: { x, y },
-      length: Math.sqrt(
-        Math.pow(x - startPoint.x, 2) + 
-        Math.pow(y - startPoint.y, 2)
-      ) * scaleFactor
-    };
 
-    setLines([...lines, newLine]);
-    setIsDrawing(false);
-    setStartPoint(null);
+    switch (selectedTool) {
+      case 'line':
+        if (isDrawing) {
+          const newLine = {
+            start: startPoint,
+            end: { x, y },
+            length: calculateDistance(startPoint, { x, y })
+          };
+          setLines([...lines, newLine]);
+          setIsDrawing(false);
+          setCurrentLine(null);
+        }
+        break;
+      case 'curve':
+        if (controlPoints.length === 3) {
+          setCurves([...curves, controlPoints]);
+          setControlPoints([]);
+        }
+        break;
+    }
   };
 
-  const handleComplete = () => {
-    setShowResults(true);
+  const calculateDistance = (point1, point2) => {
+    return Math.sqrt(
+      Math.pow(point2.x - point1.x, 2) + 
+      Math.pow(point2.y - point1.y, 2)
+    );
   };
 
-  const downloadMeasurements = () => {
-    const measurements = lines.map((line, index) => 
-      `Line ${index + 1}: ${line.length.toFixed(2)} cm`
-    ).join('\n');
-    
-    const blob = new Blob([measurements], { type: 'text/plain' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'furniture_measurements.txt';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
+  const isPointNearLine = (point, line, tolerance = 5) => {
+    const distance = distancePointToLine(point, line.start, line.end);
+    return distance < tolerance;
+  };
+
+  const distancePointToLine = (point, lineStart, lineEnd) => {
+    const A = point.x - lineStart.x;
+    const B = point.y - lineStart.y;
+    const C = lineEnd.x - lineStart.x;
+    const D = lineEnd.y - lineStart.y;
+
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+    if (lenSq !== 0) {
+      param = dot / lenSq;
+    }
+
+    let xx, yy;
+    if (param < 0) {
+      xx = lineStart.x;
+      yy = lineStart.y;
+    } else if (param > 1) {
+      xx = lineEnd.x;
+      yy = lineEnd.y;
+    } else {
+      xx = lineStart.x + param * C;
+      yy = lineStart.y + param * D;
+    }
+
+    return Math.sqrt(
+      Math.pow(point.x - xx, 2) + 
+      Math.pow(point.y - yy, 2)
+    );
+  };
+
+  const duplicateLine = () => {
+    if (selectedLine !== null) {
+      const lineToDuplicate = lines[selectedLine];
+      setLines([...lines, lineToDuplicate]);
+    }
   };
 
   const downloadOutline = () => {
     const canvas = canvasRef.current;
-    const link = document.createElement('a');
-    link.download = 'furniture_lines_outline.png';
-    
-    // Create a new canvas for white background with same dimensions
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext('2d');
-    
-    // Fill white background
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw only the lines
-    ctx.strokeStyle = 'red';
-    ctx.lineWidth = 2;
-    lines.forEach(line => {
-      ctx.beginPath();
-      ctx.moveTo(line.start.x, line.start.y);
-      ctx.lineTo(line.end.x, line.end.y);
-      ctx.stroke();
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
 
-      // Draw line number with background
-      const midX = (line.start.x + line.end.x) / 2;
-      const midY = (line.start.y + line.end.y) / 2;
-      
-      // White background for better visibility
-      ctx.fillStyle = 'white';
-      ctx.fillRect(midX - 12, midY - 12, 24, 24);
-      
-      // Black border around background
-      ctx.strokeStyle = 'black';
-      ctx.strokeRect(midX - 12, midY - 12, 24, 24);
-      
-      // Line number
-      ctx.fillStyle = 'black';
-      ctx.font = '14px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(lines.indexOf(line) + 1, midX, midY);
+    // Set canvas size and white background
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    tempCtx.fillStyle = 'white';
+    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+    // Draw lines and curves
+    tempCtx.strokeStyle = 'black';
+    tempCtx.lineWidth = 2;
+
+    // Draw lines
+    lines.forEach(line => {
+      tempCtx.beginPath();
+      tempCtx.moveTo(line.start.x, line.start.y);
+      tempCtx.lineTo(line.end.x, line.end.y);
+      tempCtx.stroke();
     });
-    
-    link.href = exportCanvas.toDataURL('image/png');
+
+    // Draw curves
+    curves.forEach((curve) => {
+      tempCtx.beginPath();
+      tempCtx.moveTo(curve[0].x, curve[0].y);
+      
+      if (curve.length === 3) {
+        // Quadratic curve
+        tempCtx.quadraticCurveTo(
+          curve[1].x, curve[1].y, 
+          curve[2].x, curve[2].y
+        );
+      } else if (curve.length === 4) {
+        // Bezier curve
+        tempCtx.bezierCurveTo(
+          curve[1].x, curve[1].y,
+          curve[2].x, curve[2].y,
+          curve[3].x, curve[3].y
+        );
+      }
+      
+      tempCtx.stroke();
+    });
+
+    // Create download link
+    const link = document.createElement('a');
+    link.download = 'furniture_outline.png';
+    link.href = tempCanvas.toDataURL('image/png');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  const renderToolbar = () => {
+    const tools = [
+      { name: 'line', icon: <Pencil /> }, // Added Pencil icon
+      { name: 'curve', icon: <Bezier /> }, // Added Bezier icon
+      { name: 'select', icon: <Move /> }, // Added Move icon
+    ];
+
+    return (
+      <div className="flex gap-2 mb-4 bg-gray-100 p-2 rounded-lg">
+        {tools.map((tool) => (
+          <Button
+            key={tool.name}
+            variant={selectedTool === tool.name ? 'default' : 'outline'}
+            onClick={() => setSelectedTool(tool.name)}
+            className="flex items-center gap-2"
+          >
+            {tool.icon}
+            {tool.name.charAt(0).toUpperCase() + tool.name.slice(1)}
+          </Button>
+        ))}
+        {selectedLine !== null && (
+          <Button 
+            onClick={duplicateLine}
+            className="flex items-center gap-2"
+          >
+            <Copy className="w-5 h-5" /> Duplicate
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <Card className="w-full max-w-4xl mx-auto">
-      <CardContent className="p-6">
-        <div className="mb-4 flex gap-2">
+    <Card className="w-full max-w-4xl mx-auto shadow-lg">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Ruler className="w-6 h-6" /> Advanced Furniture Measurement Tool
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-6 space-y-4">
+        <div className="flex gap-2 items-center">
           <input
             type="file"
             ref={fileInputRef}
             onChange={handleImageUpload}
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             className="hidden"
           />
           <Button 
@@ -233,58 +362,29 @@ const FurnitureMeasurement = () => {
           >
             <Upload className="w-4 h-4" /> Upload Image
           </Button>
-          <Button
-            onClick={handleComplete}
-            variant="secondary"
-            className="flex items-center gap-2"
-          >
-            <Check className="w-4 h-4" /> Complete
-          </Button>
         </div>
 
-        <div className="border rounded-lg overflow-hidden mb-4 bg-gray-50">
+        {renderToolbar()}
+
+        <div className="border rounded-lg overflow-hidden bg-gray-50 flex justify-center">
           <canvas
             ref={canvasRef}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onMouseLeave={() => setIsDrawing(false)}
-            className="cursor-crosshair"
+            onMouseLeave={() => {
+              setIsDrawing(false);
+              setCurrentLine(null);
+            }}
+            className="cursor-crosshair max-w-full"
             width="800"
             height="600"
           />
         </div>
 
-        {showResults && (
+        {(lines.length > 0 || curves.length > 0) && (
           <div className="space-y-4">
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-100">
-                    <th className="px-4 py-2 border">Line Number</th>
-                    <th className="px-4 py-2 border">Dimension (cm)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lines.map((line, index) => (
-                    <tr key={index}>
-                      <td className="px-4 py-2 border text-center">{index + 1}</td>
-                      <td className="px-4 py-2 border text-center">
-                        {line.length.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
             <div className="flex gap-2">
-              <Button
-                onClick={downloadMeasurements}
-                className="flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" /> Download Measurements
-              </Button>
               <Button
                 onClick={downloadOutline}
                 className="flex items-center gap-2"
